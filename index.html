@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>野球データ動画タイムスタンプ記録ツール（削除機能付き）</title>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .setup-section { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
+        .input-group { margin-bottom: 10px; }
+        input[type="text"], input[type="file"] { width: 60%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        select { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 8px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        .video-area { text-align: center; margin-bottom: 20px; }
+        .video-container { position: relative; width: 100%; padding-top: 56.25%; margin-bottom: 10px; background: #000; }
+        .video-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        .controls { margin-bottom: 15px; }
+        .controls button { background-color: #28a745; margin: 0 2px; }
+        .controls button:hover { background-color: #218838; }
+        
+        /* ボタンエリアのレイアウト調整 */
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .timestamp-btn { 
+            flex: 3;
+            padding: 15px; font-size: 18px; font-weight: bold; background-color: #dc3545; 
+        }
+        .timestamp-btn:hover { background-color: #c82333; }
+        
+        /* 削除・戻るボタンのスタイル */
+        .undo-btn {
+            flex: 1;
+            padding: 15px; font-size: 16px; font-weight: bold; background-color: #6c757d;
+        }
+        .undo-btn:hover { background-color: #5a6268; }
+
+        .table-container { overflow-x: auto; max-height: 400px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+        th { background-color: #f2f2f2; position: sticky; top: 0; }
+        tr.selected { background-color: #fff3cd; }
+        .download-btn { background-color: #17a2b8; margin-top: 10px; }
+        .download-btn:hover { background-color: #138496; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>野球データ動画タイムスタンプ記録ツール</h2>
+    
+    <div class="setup-section">
+        <div class="input-group">
+            <label>1. YouTube URL: </label>
+            <input type="text" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=xxxxxx">
+            <button onclick="loadVideo()">動画を読み込む</button>
+        </div>
+        <div class="input-group">
+            <label>2. 一球CSVアップロード: </label>
+            <input type="file" id="csvFile" accept=".csv">
+        </div>
+        <div class="input-group">
+            <label>3. 出力時間フォーマット: </label>
+            <select id="timeFormat">
+                <option value="seconds">総秒数のみ (例: 75)</option>
+                <option value="minsec">分:秒 (例: 1:15)</option>
+                <option value="raw">分:秒.コンマ秒 (例: 1:15.23)</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="video-area">
+        <div class="video-container">
+            <div id="player"></div>
+        </div>
+        
+        <div class="controls">
+            <button onclick="skip(-5)">◀◀ 5秒戻る</button>
+            <button onclick="stepFrame(-1/30)">◀ コマ戻し</button>
+            <button onclick="togglePlay()">一時停止/再生</button>
+            <button onclick="stepFrame(1/30)">コマ送り ▶</button>
+            <button onclick="skip(5)">5秒進む ▶▶</button>
+        </div>
+        
+        <div class="btn-group">
+            <button class="timestamp-btn" onclick="recordTimestamp()">⏱ タイムスタンプを記録</button>
+            <button class="undo-btn" onclick="undoTimestamp()">↩ 1つ消して戻る</button>
+        </div>
+    </div>
+
+    <h3>一球データ一覧（行をクリックして選択、記録すると自動で下にずれます）</h3>
+    <div class="table-container">
+        <table id="csvTable">
+            <thead>
+                <tr>
+                    <th>イニング</th>
+                    <th>表裏</th>
+                    <th>投手</th>
+                    <th>打者</th>
+                    <th>カウント</th>
+                    <th>タイムスタンプ（動画集連動用）</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody">
+                <tr>
+                    <td colspan="6">CSVファイルをアップロードするか、下のボタンでテストデータを生成してください。</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <button class="download-btn" onclick="downloadCSV()">編集後のCSVをダウンロード</button>
+    <button style="background-color: #6c757d;" onclick="loadSampleData()">テスト用サンプルデータを読み込む</button>
+</div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+    let player;
+    let csvData = [];
+    let selectedRowIndex = null;
+
+    function onYouTubeIframeAPIReady() {}
+
+    function loadVideo() {
+        const urlInput = document.getElementById('youtubeUrl').value;
+        const videoId = extractVideoId(urlInput);
+        if (!videoId) { alert('有効なYouTubeのURLを入力してください。'); return; }
+
+        if (player) {
+            player.loadVideoById(videoId);
+        } else {
+            player = new YT.Player('player', {
+                height: '100%', width: '100%', videoId: videoId,
+                playerVars: { 'playsinline': 1, 'controls': 1 }
+            });
+        }
+    }
+
+    function extractVideoId(url) {
+        const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+        const match = url.match(regExp);
+        return (match && match[2].length === 11) ? match[2] : null;
+    }
+
+    function togglePlay() {
+        if (!player) return;
+        const state = player.getPlayerState();
+        state === YT.PlayerState.PLAYING ? player.pauseVideo() : player.playVideo();
+    }
+
+    function skip(seconds) { if (player) player.seekTo(player.getCurrentTime() + seconds, true); }
+    function stepFrame(seconds) { if (player) { player.pauseVideo(); player.seekTo(player.getCurrentTime() + seconds, true); } }
+
+    document.getElementById('csvFile').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) { parseCSV(event.target.result); };
+        reader.readAsText(file, 'UTF-8');
+    });
+
+    function loadSampleData() {
+        const sampleText = "1,表,山本,田中,0-0,\n1,表,山本,田中,1-0,\n1,表,山本,田中,1-1,\n1,裏,高橋,佐藤,0-0,";
+        parseCSV(sampleText);
+    }
+
+    function parseCSV(text) {
+        const lines = text.split(/\r\n|\n/);
+        csvData = [];
+        lines.forEach(line => {
+            if (line.trim() === '') return;
+            const columns = line.split(',');
+            while(columns.length < 6) { columns.push(''); }
+            csvData.push(columns);
+        });
+        renderTable();
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('tableBody');
+        tbody.innerHTML = '';
+        selectedRowIndex = null;
+
+        csvData.forEach((row, index) => {
+            const tr = document.createElement('tr');
+            tr.onclick = () => selectRow(index);
+            tr.id = `row-${index}`;
+            for (let i = 0; i < 6; i++) {
+                const td = document.createElement('td');
+                td.textContent = row[i] || '';
+                tr.appendChild(td);
+            }
+            tbody.appendChild(tr);
+        });
+        if(csvData.length > 0) selectRow(0);
+    }
+
+    function selectRow(index) {
+        if (selectedRowIndex !== null) {
+            const prevRow = document.getElementById(`row-${selectedRowIndex}`);
+            if (prevRow) prevRow.classList.remove('selected');
+        }
+        selectedRowIndex = index;
+        const row = document.getElementById(`row-${selectedRowIndex}`);
+        if (row) row.classList.add('selected');
+    }
+
+    function recordTimestamp() {
+        if (!player || selectedRowIndex === null) { alert('動画またはCSVが準備できていません。'); return; }
+
+        const currentTime = player.getCurrentTime(); 
+        const formatType = document.getElementById('timeFormat').value;
+        let formattedTime = "";
+
+        if (formatType === "seconds") {
+            formattedTime = Math.floor(currentTime).toString();
+        } else if (formatType === "minsec") {
+            const mins = Math.floor(currentTime / 60);
+            const secs = Math.floor(currentTime % 60);
+            formattedTime = `${mins}:${secs.toString().padStart(2, '0')}`;
+        } else {
+            const mins = Math.floor(currentTime / 60);
+            const secs = Math.floor(currentTime % 60);
+            const ms = Math.floor((currentTime % 1) * 100);
+            formattedTime = `${mins}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+        }
+
+        csvData[selectedRowIndex][5] = formattedTime;
+        document.getElementById(`row-${selectedRowIndex}`).cells[5].textContent = formattedTime;
+
+        if (selectedRowIndex < csvData.length - 1) {
+            selectRow(selectedRowIndex + 1);
+            document.getElementById(`row-${selectedRowIndex}`).scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    }
+
+    // ★新機能：「1つ消して戻る」関数
+    function undoTimestamp() {
+        if (selectedRowIndex === null || csvData.length === 0) return;
+
+        // すでに最初の行にいる場合は、現在の行を消去するだけ
+        let targetIndex = selectedRowIndex;
+
+        // もし現在選択されている行が空で、1つ前の行が存在するなら、1つ前に戻って処理する
+        if (selectedRowIndex > 0 && csvData[selectedRowIndex][5] === '') {
+            targetIndex = selectedRowIndex - 1;
+        }
+
+        // 狙った行のデータを消去
+        csvData[targetIndex][5] = '';
+        document.getElementById(`row-${targetIndex}`).cells[5].textContent = '';
+
+        // 選択状態をその行（消去した行）に戻す
+        selectRow(targetIndex);
+        document.getElementById(`row-${targetIndex}`).scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    function downloadCSV() {
+        if (csvData.length === 0) return;
+        const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+        const csvRows = csvData.map(row => row.join(',')).join('\n');
+        const blob = new Blob([bom, csvRows], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", "baseball_singles_stamps.csv");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+</script>
+</body>
+</html>
