@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>野球動画タイムスタンプ記録ツール（スッキリ表示版）</title>
+    <title>野球動画タイムスタンプ記録ツール（詳細カラム版）</title>
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; color: #333; }
         h2 { margin-top: 0; font-size: 20px; color: #1a1a1a; }
@@ -107,14 +107,15 @@
                     <tr>
                         <th>イニング</th>
                         <th>投手</th>
-                        <th>打者</th>
-                        <th>カウント</th>
+                        <th>打者名</th>
+                        <th>ボール</th>
+                        <th>ストライク</th>
                         <th>タイムスタンプ</th>
                     </tr>
                 </thead>
                 <tbody id="tableBody">
                     <tr>
-                        <td colspan="5" style="color: #666; padding: 40px;">CSVファイルをアップロードしてください。</td>
+                        <td colspan="6" style="color: #666; padding: 40px;">CSVファイルをアップロードしてください。</td>
                     </tr>
                 </tbody>
             </table>
@@ -129,15 +130,22 @@
 
 <script src="https://www.youtube.com/iframe_api"></script>
 <script>
-    // 画面に表示したい4つのデータ項目（タイムスタンプはプログラム側で最後に強制合体させます）
-    const DISPLAY_DATA_COLUMNS = ["イニング", "投手", "打者", "カウント"];
+    // 画面に表示したいデータのキーワード設定
+    // CSV内のヘッダー名にこれらの文字が含まれているものを自動で探します
+    const DISPLAY_KEYWORDS = {
+        inning: "イニング",
+        pitcher: "投手",
+        batter: "打者", // "打者名" でも "打者" でも引っかかるようにします
+        ball: "ボール",
+        strike: "ストライク"
+    };
 
     let player;
-    let csvData = [];          // 全データを保持する配列
-    let csvHeaders = [];       // 元のCSVの全ヘッダー
-    let displayIndices = [];   // 表示用4項目のインデックス
-    let currentInputId = null; // 現在の入力対象行のID
-    let myStampIndex = -1;     // 今回新しく定義する専用スタンプ列のインデックス
+    let csvData = [];
+    let csvHeaders = [];
+    let displayIndices = { inning: -1, pitcher: -1, batter: -1, ball: -1, strike: -1 };
+    let currentInputId = null;
+    let myStampIndex = -1;
 
     function onYouTubeIframeAPIReady() {}
 
@@ -168,7 +176,7 @@
     });
 
     function loadSampleData() {
-        const sampleText = "日付,イニング,表裏,投手,打者,カウント,タイムスタンプ\n2026/5/16,1,表,山本,田中,0-0,0:01:10\n2026/5/16,1,表,山本,田中,1-0,0:01:25\n2026/5/16,1,表,山本,田中,1-1,0:01:50\n2026/5/16,1,裏,高橋,佐藤,0-0,0:02:10";
+        const sampleText = "日付,イニング,投手,打者名,ボール,ストライク,タイムスタンプ\n2026/5/16,1,山本,田中,0,0,0:01:10\n2026/5/16,1,山本,田中,1,0,0:01:25\n2026/5/16,1,山本,田中,1,1,0:01:50\n2026/5/16,1,高橋,佐藤,0,0,0:02:10";
         parseCSV(sampleText);
     }
 
@@ -176,32 +184,25 @@
         const lines = text.split(/\r\n|\n/).map(line => line.trim()).filter(line => line !== '');
         if(lines.length === 0) return;
 
-        // 元の全ヘッダーを読み込み
         csvHeaders = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
         
-        // ★ポイント1: 既存の「タイムスタンプ」という列の名前があれば「旧タイムスタンプ」に強制改名して無効化
+        // 既存のタイムスタンプを無効化
         csvHeaders = csvHeaders.map(h => h === "タイムスタンプ" ? "旧タイムスタンプ" : h);
         
-        // そして、完全に新しくツール専用の「タイムスタンプ」列を最後の列として新規追加！
+        // 新しいタイムスタンプ列を末尾に設置
         csvHeaders.push("タイムスタンプ");
-        myStampIndex = csvHeaders.length - 1; // 一番右端のインデックス
+        myStampIndex = csvHeaders.length - 1;
 
-        // 表示させたい「イニング・投手・打者・カウント」が元のCSVのどこにあるか追跡
-        displayIndices = DISPLAY_DATA_COLUMNS.map(colName => {
-            return csvHeaders.findIndex(header => header.includes(colName));
-        });
+        // キーワードに一致する列のインデックスを自動検索
+        for (let key in DISPLAY_KEYWORDS) {
+            displayIndices[key] = csvHeaders.findIndex(header => header.includes(DISPLAY_KEYWORDS[key]));
+        }
 
-        // データ行のパース
         csvData = [];
         for (let i = 1; i < lines.length; i++) {
             let columns = lines[i].split(',');
-            // 新しく追加したタイムスタンプ列の分、末尾に空文字のセルを1つ強制追加
-            while (columns.length < csvHeaders.length) {
-                columns.push('');
-            }
-            // もし元のCSV行にすでにデータが詰まってた場合でも、一番右端（myStampIndex）は必ず空文字に初期化
+            while (columns.length < csvHeaders.length) { columns.push(''); }
             columns[myStampIndex] = ''; 
-            
             csvData.push({ originalIndex: i - 1, cells: columns });
         }
 
@@ -214,14 +215,11 @@
         thead.innerHTML = '';
         const tr = document.createElement('tr');
         
-        // 画面にだすヘッダーを固定（4項目 + タイムスタンプ）
-        DISPLAY_DATA_COLUMNS.forEach(h => {
+        // 表示するヘッダーを確定
+        const headersToRender = ["イニング", "投手", "打者名", "ボール", "ストライク", "タイムスタンプ"];
+        headersToRender.forEach(h => {
             const th = document.createElement('th'); th.textContent = h; tr.appendChild(th);
         });
-        const thStamp = document.createElement('th');
-        thStamp.textContent = "タイムスタンプ";
-        tr.appendChild(thStamp);
-        
         thead.appendChild(tr);
     }
 
@@ -229,10 +227,9 @@
         const tbody = document.getElementById('tableBody');
         tbody.innerHTML = '';
 
-        // 新しいタイムスタンプ列（myStampIndex）が空か入っているかで仕分け
         let uncompleted = csvData.filter(item => item.cells[myStampIndex] === '' && item.originalIndex !== currentInputId);
         let completed = csvData.filter(item => item.cells[myStampIndex] !== '' && item.originalIndex !== currentInputId);
-        completed.reverse(); // 直近で押したものが上にくるように反転
+        completed.reverse();
 
         let sortedDisplayData = [];
         let currentItem = csvData.find(item => item.originalIndex === currentInputId);
@@ -248,15 +245,17 @@
 
             tr.onclick = () => { currentInputId = item.originalIndex; renderTable(); };
 
-            // 1. 基本の4データ項目を表示
-            displayIndices.forEach(idx => {
+            // 順番にセルを生成して表示
+            const keysOrder = ['inning', 'pitcher', 'batter', 'ball', 'strike'];
+            keysOrder.forEach(key => {
                 const td = document.createElement('td');
-                let cellText = (idx !== -1 && item.cells[idx] !== undefined) ? item.cells[idx] : '';
+                let idx = displayIndices[key];
+                let cellText = (idx !== -1 && item.cells[idx] !== undefined) ? item.cells[idx] : '-';
                 td.textContent = cellText.replace(/"/g, '');
                 tr.appendChild(td);
             });
             
-            // 2. タイムスタンプ列の表示（★ポイント2: 記録されるまでは真っ白空欄になります）
+            // タイムスタンプセル（最初は空欄）
             const tdStamp = document.createElement('td');
             tdStamp.textContent = item.cells[myStampIndex]; 
             tr.appendChild(tdStamp);
@@ -299,7 +298,7 @@
         }
 
         let item = csvData.find(i => i.originalIndex === currentInputId);
-        item.cells[myStampIndex] = formattedTime; // 新しい列へ確実に記録
+        item.cells[myStampIndex] = formattedTime;
 
         autoSelectNextRow();
     }
@@ -324,8 +323,6 @@
         if (csvData.length === 0) return;
         const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
         
-        // 元々あった「古いタイムスタンプ」の項目データも全て残した状態で、
-        // 完全に一番右端に「新しい今回のタイムスタンプ」を合体させて保存します。
         let outputLines = [csvHeaders.join(',')];
         let sortedData = [...csvData].sort((a, b) => a.originalIndex - b.originalIndex);
         sortedData.forEach(item => { outputLines.push(item.cells.join(',')); });
@@ -335,7 +332,7 @@
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.setAttribute("href", url);
-        link.setAttribute("download", "baseball_stamps_new.csv");
+        link.setAttribute("download", "baseball_stamps_output.csv");
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
