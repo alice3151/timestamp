@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>野球動画タイムスタンプ記録ツール（h:m:s対応版）</title>
+    <title>野球動画タイムスタンプ記録ツール（カラム厳選版）</title>
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; color: #333; }
         h2 { margin-top: 0; font-size: 20px; color: #1a1a1a; }
@@ -100,18 +100,21 @@
     </div>
     
     <div class="right-panel">
-        <h2>一球データ一覧（入力対象が一番上に自動移動します）</h2>
+        <h2>一球データ一覧（選択カラムのみ表示）</h2>
         <div class="table-container">
             <table id="csvTable">
                 <thead id="tableHead">
                     <tr>
-                        <th>データ項目</th>
+                        <th>イニング</th>
+                        <th>投手</th>
+                        <th>打者</th>
+                        <th>カウント</th>
                         <th>タイムスタンプ</th>
                     </tr>
                 </thead>
                 <tbody id="tableBody">
                     <tr>
-                        <td colspan="2" style="color: #666; padding: 40px;">CSVファイルをアップロードしてください。</td>
+                        <td colspan="5" style="color: #666; padding: 40px;">CSVファイルをアップロードしてください。</td>
                     </tr>
                 </tbody>
             </table>
@@ -126,9 +129,15 @@
 
 <script src="https://www.youtube.com/iframe_api"></script>
 <script>
+    // ★【カスタマイズ用設定】CSV内から探して画面に出したいヘッダー名を指定します
+    // お手元のCSVのヘッダー名と完全に一致させてください（一部含まれる文字でも探せます）
+    const TARGET_COLUMNS = ["イニング", "投手", "打者", "カウント", "タイムスタンプ"];
+
     let player;
-    let csvData = [];
-    let csvHeaders = [];
+    let csvData = [];        // 元の全CSV行データを保持
+    let csvHeaders = [];     // 元の全CSVヘッダーを保持
+    let targetIndices = [];  // TARGET_COLUMNSが、元のCSVの何番目の列にあるかのインデックス
+    let stampColumnIndex = -1; // タイムスタンプ列の元のインデックス
     let currentInputId = null;
 
     function onYouTubeIframeAPIReady() {}
@@ -160,7 +169,7 @@
     });
 
     function loadSampleData() {
-        const sampleText = "日付,イニング,表裏,投手,打者,カウント\n2026/5/16,1,表,山本,田中,0-0\n2026/5/16,1,表,山本,田中,1-0\n2026/5/16,1,表,山本,田中,1-1\n2026/5/16,1,裏,高橋,佐藤,0-0";
+        const sampleText = "日付,イニング,表裏,投手,打者,カウント,球種,結果\n2026/5/16,1,表,山本,田中,0-0,ストレート,ボール\n2026/5/16,1,表,山本,田中,1-0,カーブ,ストライク\n2026/5/16,1,表,山本,田中,1-1,フォーク,安打\n2026/5/16,1,裏,高橋,佐藤,0-0,スライダー,凡打";
         parseCSV(sampleText);
     }
 
@@ -168,11 +177,23 @@
         const lines = text.split(/\r\n|\n/).map(line => line.trim()).filter(line => line !== '');
         if(lines.length === 0) return;
 
-        csvHeaders = lines[0].split(',');
-        if (!csvHeaders[csvHeaders.length - 1].includes("タイムスタンプ")) {
+        // 全ヘッダーを取得（クォーテーション等を除去）
+        csvHeaders = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+        
+        // 元のCSVの最後に「タイムスタンプ」が無ければ追加
+        if (!csvHeaders.some(h => h.includes("タイムスタンプ"))) {
             csvHeaders.push("タイムスタンプ");
         }
 
+        // 表示させたい5つの列が、元のCSVの「何番目の列か」の番号を割り出す
+        targetIndices = TARGET_COLUMNS.map(targetName => {
+            return csvHeaders.findIndex(header => header.includes(targetName));
+        });
+        
+        // タイムスタンプ列のインデックスを保持
+        stampColumnIndex = csvHeaders.findIndex(header => header.includes("タイムスタンプ"));
+
+        // データ処理
         csvData = [];
         for (let i = 1; i < lines.length; i++) {
             let columns = lines[i].split(',');
@@ -188,9 +209,11 @@
         const thead = document.getElementById('tableHead');
         thead.innerHTML = '';
         const tr = document.createElement('tr');
-        csvHeaders.forEach(h => {
+        
+        // TARGET_COLUMNS（指定した5つ）のヘッダーだけを作る
+        TARGET_COLUMNS.forEach(h => {
             const th = document.createElement('th');
-            th.textContent = h.replace(/"/g, '');
+            th.textContent = h;
             tr.appendChild(th);
         });
         thead.appendChild(tr);
@@ -200,14 +223,14 @@
         const tbody = document.getElementById('tableBody');
         tbody.innerHTML = '';
 
-        let uncompleted = csvData.filter(item => item.cells[item.cells.length - 1] === '' && item.originalIndex !== currentInputId);
-        let completed = csvData.filter(item => item.cells[item.cells.length - 1] !== '' && item.originalIndex !== currentInputId);
+        // 並び替え用（未入力が上、入力済みが下）
+        let uncompleted = csvData.filter(item => item.cells[stampColumnIndex] === '' && item.originalIndex !== currentInputId);
+        let completed = csvData.filter(item => item.cells[stampColumnIndex] !== '' && item.originalIndex !== currentInputId);
         completed.reverse();
 
         let sortedDisplayData = [];
         let currentItem = csvData.find(item => item.originalIndex === currentInputId);
         if (currentItem) sortedDisplayData.push(currentItem);
-        
         sortedDisplayData = sortedDisplayData.concat(uncompleted).concat(completed);
 
         sortedDisplayData.forEach(item => {
@@ -215,30 +238,29 @@
             tr.id = `row-${item.originalIndex}`;
             
             if (item.originalIndex === currentInputId) tr.classList.add('selected');
-            if (item.cells[item.cells.length - 1] !== '') tr.classList.add('has-stamp');
+            if (item.cells[stampColumnIndex] !== '') tr.classList.add('has-stamp');
 
-            tr.onclick = () => {
-                currentInputId = item.originalIndex;
-                renderTable();
-            };
+            tr.onclick = () => { currentInputId = item.originalIndex; renderTable(); };
 
-            item.cells.forEach(cellText => {
+            // ★ここがポイント：必要なインデックスのセル（5カラム分）だけを抽出して描画
+            targetIndices.forEach(idx => {
                 const td = document.createElement('td');
+                let cellText = (idx !== -1 && item.cells[idx] !== undefined) ? item.cells[idx] : '';
                 td.textContent = cellText.replace(/"/g, '');
                 tr.appendChild(td);
             });
+            
             tbody.appendChild(tr);
         });
     }
 
     function autoSelectNextRow() {
-        let nextItem = csvData.find(item => item.cells[item.cells.length - 1] === '');
+        let nextItem = csvData.find(item => item.cells[stampColumnIndex] === '');
         if (nextItem) { currentInputId = nextItem.originalIndex; } 
         else { currentInputId = null; }
         renderTable();
     }
 
-    // ★タイムスタンプ記録処理（h:m:s フォーマットを追加修正）
     function recordTimestamp() {
         if (!player) { alert('動画が読み込まれていません。'); return; }
         if (currentInputId === null) { alert('入力対象の行がありません。'); return; }
@@ -248,7 +270,6 @@
         let formattedTime = "";
 
         if (formatType === "hms") {
-            // 新機能：時:分:秒（例: 1:02:15 または 0:45:12）
             const hours = Math.floor(currentTime / 3600);
             const mins = Math.floor((currentTime % 3600) / 60);
             const secs = Math.floor(currentTime % 60);
@@ -267,22 +288,22 @@
         }
 
         let item = csvData.find(i => i.originalIndex === currentInputId);
-        item.cells[item.cells.length - 1] = formattedTime;
+        item.cells[stampColumnIndex] = formattedTime;
 
         autoSelectNextRow();
     }
 
     function undoTimestamp() {
         let targetItem = null;
-        if (currentInputId !== null && csvData[currentInputId].cells[csvData[currentInputId].cells.length - 1] !== '') {
+        if (currentInputId !== null && csvData[currentInputId].cells[stampColumnIndex] !== '') {
             targetItem = csvData[currentInputId];
         } else {
-            let completedItems = csvData.filter(item => item.cells[item.cells.length - 1] !== '');
+            let completedItems = csvData.filter(item => item.cells[stampColumnIndex] !== '');
             if (completedItems.length > 0) { targetItem = completedItems[completedItems.length - 1]; }
         }
 
         if (targetItem) {
-            targetItem.cells[targetItem.cells.length - 1] = '';
+            targetItem.cells[stampColumnIndex] = '';
             currentInputId = targetItem.originalIndex;
             renderTable();
         }
@@ -291,8 +312,9 @@
     function downloadCSV() {
         if (csvData.length === 0) return;
         const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-        let outputLines = [csvHeaders.join(',')];
         
+        // 保存するときは、元のCSVに存在していた他の列（日付、球種、結果など）も全て維持して保存します
+        let outputLines = [csvHeaders.join(',')];
         let sortedData = [...csvData].sort((a, b) => a.originalIndex - b.originalIndex);
         sortedData.forEach(item => { outputLines.push(item.cells.join(',')); });
 
