@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>野球動画タイムスタンプ記録ツール（詳細カラム版）</title>
+    <title>野球動画タイムスタンプ記録ツール（個人名自動判別版）</title>
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; color: #333; }
         h2 { margin-top: 0; font-size: 20px; color: #1a1a1a; }
@@ -63,7 +63,7 @@
         <div class="setup-section">
             <div class="input-group">
                 <label>1. YouTube</label>
-                <input type="text" id="youtubeUrl" placeholder="URLをペースト">
+                <input type="text" id="youtubeUrl" placeholder="URLまたは動画ID（11桁）をペースト">
                 <button onclick="loadVideo()">読込</button>
             </div>
             <div class="input-group">
@@ -100,7 +100,7 @@
     </div>
     
     <div class="right-panel">
-        <h2>一球データ一覧（未入力が上、記録すると時間が表示されます）</h2>
+        <h2>一球データ一覧（表示はスッキリ5項目、出力は全カラム保持）</h2>
         <div class="table-container">
             <table id="csvTable">
                 <thead id="tableHead">
@@ -130,14 +130,14 @@
 
 <script src="https://www.youtube.com/iframe_api"></script>
 <script>
-    // 画面に表示したいデータのキーワード設定
-    // CSV内のヘッダー名にこれらの文字が含まれているものを自動で探します
-    const DISPLAY_KEYWORDS = {
-        inning: "イニング",
-        pitcher: "投手",
-        batter: "打者", // "打者名" でも "打者" でも引っかかるようにします
-        ball: "ボール",
-        strike: "ストライク"
+    // CSV内のヘッダー名を自動判別するためのキーワード候補
+    // 候補を複数入れることで、お持ちのCSVの表記に柔軟にマッチさせます
+    const MATCH_RULES = {
+        inning: ["イニング", "回"],
+        pitcher: ["投手名", "投手", "ピッチャー"],
+        batter: ["打者名", "打者", "バッター", "選手名"], // 個人名が入っていそうなヘッダー候補
+        ball: ["ボール", "B"],
+        strike: ["ストライク", "S"]
     };
 
     let player;
@@ -150,17 +150,36 @@
     function onYouTubeIframeAPIReady() {}
 
     function loadVideo() {
-        const urlInput = document.getElementById('youtubeUrl').value;
+        const urlInput = document.getElementById('youtubeUrl').value.trim();
+        if (!urlInput) { alert('URLを入力してください。'); return; }
+        
         const videoId = extractVideoId(urlInput);
-        if (!videoId) { alert('有効なYouTubeのURLを入力してください。'); return; }
-        if (player) { player.loadVideoById(videoId); } 
-        else { player = new YT.Player('player', { height: '100%', width: '100%', videoId: videoId, playerVars: { 'playsinline': 1, 'controls': 1 } }); }
+        if (!videoId) { 
+            alert('YouTubeの動画ID（11桁の英数字）を検出できませんでした。'); 
+            return; 
+        }
+        
+        if (player) { 
+            player.loadVideoById(videoId); 
+        } else { 
+            player = new YT.Player('player', { 
+                height: '100%', width: '100%', videoId: videoId, 
+                playerVars: { 'playsinline': 1, 'controls': 1 } 
+            }); 
+        }
     }
 
     function extractVideoId(url) {
-        const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+        if (url.length === 11 && !url.includes('/') && !url.includes('.')) return url;
+        const regExp = /^.*(?:(?:youtu\.be\/|v\/|vi\/|u\/\w\/|embed\/|shorts\/|live\/)|(?:(?:watch|\?v=|&v=)))([^#\&\?]*).*/;
         const match = url.match(regExp);
-        return (match && match[2].length === 11) ? match[2] : null;
+        if (match && match[1] && match[1].length === 11) return match[1];
+        try {
+            const urlObj = new URL(url);
+            const vParam = urlObj.searchParams.get("v");
+            if (vParam && vParam.length === 11) return vParam;
+        } catch(e) {}
+        return null;
     }
 
     function togglePlay() { if (!player) return; const state = player.getPlayerState(); state === YT.PlayerState.PLAYING ? player.pauseVideo() : player.playVideo(); }
@@ -176,7 +195,7 @@
     });
 
     function loadSampleData() {
-        const sampleText = "日付,イニング,投手,打者名,ボール,ストライク,タイムスタンプ\n2026/5/16,1,山本,田中,0,0,0:01:10\n2026/5/16,1,山本,田中,1,0,0:01:25\n2026/5/16,1,山本,田中,1,1,0:01:50\n2026/5/16,1,高橋,佐藤,0,0,0:02:10";
+        const sampleText = "日付,イニング,投手名,打者名,ボール,ストライク,球種\n2026/5/16,1,山本,田中,0,0,ストレート\n2026/5/16,1,山本,田中,1,0,カーブ\n2026/5/16,1,山本,大谷,0,0,フォーク\n2026/5/16,1,高橋,佐藤,0,0,スライダー";
         parseCSV(sampleText);
     }
 
@@ -185,17 +204,16 @@
         if(lines.length === 0) return;
 
         csvHeaders = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
-        
-        // 既存のタイムスタンプを無効化
         csvHeaders = csvHeaders.map(h => h === "タイムスタンプ" ? "旧タイムスタンプ" : h);
-        
-        // 新しいタイムスタンプ列を末尾に設置
         csvHeaders.push("タイムスタンプ");
         myStampIndex = csvHeaders.length - 1;
 
-        // キーワードに一致する列のインデックスを自動検索
-        for (let key in DISPLAY_KEYWORDS) {
-            displayIndices[key] = csvHeaders.findIndex(header => header.includes(DISPLAY_KEYWORDS[key]));
+        // ★強化された自動判別ロジック
+        // 各項目について、MATCH_RULESに定義した候補がCSVヘッダーに含まれるか探す
+        for (let key in MATCH_RULES) {
+            displayIndices[key] = csvHeaders.findIndex(header => {
+                return MATCH_RULES[key].some(candidate => header.includes(candidate));
+            });
         }
 
         csvData = [];
@@ -214,8 +232,6 @@
         const thead = document.getElementById('tableHead');
         thead.innerHTML = '';
         const tr = document.createElement('tr');
-        
-        // 表示するヘッダーを確定
         const headersToRender = ["イニング", "投手", "打者名", "ボール", "ストライク", "タイムスタンプ"];
         headersToRender.forEach(h => {
             const th = document.createElement('th'); th.textContent = h; tr.appendChild(th);
@@ -245,7 +261,6 @@
 
             tr.onclick = () => { currentInputId = item.originalIndex; renderTable(); };
 
-            // 順番にセルを生成して表示
             const keysOrder = ['inning', 'pitcher', 'batter', 'ball', 'strike'];
             keysOrder.forEach(key => {
                 const td = document.createElement('td');
@@ -255,7 +270,6 @@
                 tr.appendChild(td);
             });
             
-            // タイムスタンプセル（最初は空欄）
             const tdStamp = document.createElement('td');
             tdStamp.textContent = item.cells[myStampIndex]; 
             tr.appendChild(tdStamp);
@@ -322,7 +336,6 @@
     function downloadCSV() {
         if (csvData.length === 0) return;
         const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-        
         let outputLines = [csvHeaders.join(',')];
         let sortedData = [...csvData].sort((a, b) => a.originalIndex - b.originalIndex);
         sortedData.forEach(item => { outputLines.push(item.cells.join(',')); });
