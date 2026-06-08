@@ -3,20 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>野球動画タイムスタンプ記録ツール（全機能統合版）</title>
+    <title>野球動画タイムスタンプ記録ツール（打者名修正版）</title>
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; color: #333; }
         h2 { margin-top: 0; font-size: 18px; color: #1a1a1a; border-left: 5px solid #007bff; padding-left: 10px; margin-bottom: 15px; }
         
         .main-layout { display: flex; gap: 20px; max-width: 1450px; margin: 0 auto; align-items: flex-start; }
         
-        /* 左側パネル */
         .left-panel {
             flex: 1.2; background: white; padding: 20px; border-radius: 12px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.08); position: sticky; top: 20px; height: fit-content;
         }
         
-        /* 右側パネル */
         .right-panel {
             flex: 1; background: white; padding: 20px; border-radius: 12px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.08); display: flex; flex-direction: column; height: 90vh;
@@ -48,13 +46,12 @@
         th, td { border-bottom: 1px solid #dee2e6; padding: 8px 4px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         th { background-color: #f8f9fa; position: sticky; top: 0; z-index: 10; font-weight: bold; border-bottom: 2px solid #dee2e6; font-size: 11px; }
         
-        /* 列の幅調整 */
         th:nth-child(1), td:nth-child(1) { width: 45px; } /* イニング */
         th:nth-child(2), td:nth-child(2) { width: 70px; } /* 投手 */
-        th:nth-child(3), td:nth-child(3) { width: 70px; } /* 打者 */
+        th:nth-child(3), td:nth-child(3) { width: 70px; } /* 打者名 */
         th:nth-child(4), td:nth-child(4) { width: 40px; } /* B */
         th:nth-child(5), td:nth-child(5) { width: 40px; } /* S */
-        th:nth-child(6), td:nth-child(6) { width: 80px; } /* 結果 */
+        th:nth-child(6), td:nth-child(6) { width: 85px; } /* 結果 */
         
         tr.selected { background-color: #fff3cd !important; font-weight: bold; }
         tr.has-stamp { background-color: #e2f0d9; }
@@ -105,7 +102,7 @@
         
         <div class="btn-group">
             <button class="timestamp-btn" onclick="recordTimestamp()">⏱ タイムスタンプを記録</button>
-            <button class="undo-btn" onclick="undoTimestamp()">↩ 消して戻る</button>
+            <button class="undo-btn" onclick="undoTimestamp()">↩ 消して戻す</button>
         </div>
     </div>
     
@@ -141,14 +138,13 @@
 
 <script src="https://www.youtube.com/iframe_api"></script>
 <script>
-    // 自動判別ルール
+    // 自動判別キーワード（部分一致の優先順位を整理）
     const MATCH_RULES = {
         inning: ["イニング", "回"],
-        pitcher: ["投手名", "投手", "ピッチャー"],
-        batter: ["打者名", "打者", "バッター", "選手名"],
-        ball: ["ボール", "B"],
-        strike: ["ストライク", "S"],
-        result: ["結果", "打撃結果", "内容", "プレー"]
+        pitcher: ["投手名", "投手"],
+        ball: ["ボールカウント", "ボール", "B"],
+        strike: ["ストライクカウント", "ストライク", "S"],
+        result: ["投球結果", "打席結果", "結果"]
     };
 
     let player;
@@ -188,25 +184,61 @@
     });
 
     function loadSampleData() {
-        const sampleText = "イニング,投手,打者名,ボール,ストライク,結果\n1,山本,田中,0,0,二ゴロ\n1,山本,田中,1,0,空振り\n1,山本,大谷,0,0,本塁打";
+        const sampleText = "イニング,投手名,打者名,ボールカウント,ストライクカウント,投球結果\n1,友廣陸,矢竹開,0,0,ファウル\n1,友廣陸,矢竹開,0,1,ボール";
         parseCSV(sampleText);
     }
 
     function parseCSV(text) {
-        const lines = text.split(/\r\n|\n/).map(l => l.trim()).filter(l => l !== '');
+        // カンマで行が分割される際、クォーテーション内のカンマを保護しつつ正しくパースする
+        const lines = [];
+        let row = [];
+        let inQuotes = false;
+        let currentCell = '';
+
+        for (let i = 0; i < text.length; i++) {
+            let c = text[i];
+            if (c === '"') {
+                inQuotes = !inQuotes;
+            } else if (c === ',' && !inQuotes) {
+                row.push(currentCell.trim());
+                currentCell = '';
+            } else if ((c === '\r' || c === '\n') && !inQuotes) {
+                if (c === '\r' && text[i+1] === '\n') { i++; }
+                row.push(currentCell.trim());
+                if (row.length > 0 && row.some(cell => cell !== '')) { lines.push(row); }
+                row = [];
+                currentCell = '';
+            } else {
+                currentCell += c;
+            }
+        }
+        if (currentCell !== '' || row.length > 0) {
+            row.push(currentCell.trim());
+            lines.push(row);
+        }
+
         if(lines.length === 0) return;
-        csvHeaders = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+        
+        // ヘッダー行の取得
+        csvHeaders = lines[0].map(h => h.replace(/"/g, '').trim());
         csvHeaders = csvHeaders.map(h => h === "タイムスタンプ" ? "旧スタンプ" : h);
         csvHeaders.push("タイムスタンプ");
         myStampIndex = csvHeaders.length - 1;
 
+        // 【修正】打者名の列をピンポイントで判別（「打者名」の完全一致を最優先、なければ「選手名」「打者」）
+        let bIdx = csvHeaders.findIndex(h => h === "打者名");
+        if (bIdx === -1) bIdx = csvHeaders.findIndex(h => h === "選手名");
+        if (bIdx === -1) bIdx = csvHeaders.findIndex(h => h === "打者");
+        displayIndices['batter'] = bIdx;
+
+        // その他の列の自動判別
         for (let key in MATCH_RULES) {
             displayIndices[key] = csvHeaders.findIndex(h => MATCH_RULES[key].some(c => h.includes(c)));
         }
 
         csvData = [];
         for (let i = 1; i < lines.length; i++) {
-            let cols = lines[i].split(',');
+            let cols = lines[i];
             while (cols.length < csvHeaders.length) { cols.push(''); }
             cols[myStampIndex] = ''; 
             csvData.push({ originalIndex: i - 1, cells: cols });
