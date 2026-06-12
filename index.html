@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>野球動画タイムスタンプ記録ツール（打者名修正版）</title>
+    <title>野球動画タイムスタンプ記録ツール（ローカル動画対応＆ボタン名称統一版）</title>
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; color: #333; }
         h2 { margin-top: 0; font-size: 18px; color: #1a1a1a; border-left: 5px solid #007bff; padding-left: 10px; margin-bottom: 15px; }
@@ -22,14 +22,14 @@
 
         .setup-section { background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px; font-size: 13px; }
         .input-group { margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
-        .input-group label { width: 80px; font-weight: bold; }
+        .input-group label { width: 90px; font-weight: bold; }
         input[type="text"], input[type="file"], select { flex: 1; padding: 7px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
         
         button { padding: 8px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
         button:hover { background-color: #0056b3; }
         
         .video-container { position: relative; width: 100%; padding-top: 56.25%; background: #000; border-radius: 8px; overflow: hidden; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
-        .video-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        .video-container iframe, .video-container video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; }
         
         .controls { display: flex; justify-content: space-between; margin-bottom: 15px; gap: 4px; }
         .controls button { background-color: #28a745; flex: 1; padding: 10px 2px; font-size: 11px; }
@@ -70,16 +70,20 @@
         
         <div class="setup-section">
             <div class="input-group">
-                <label>YouTube</label>
+                <label>1. YouTube</label>
                 <input type="text" id="youtubeUrl" placeholder="URLを貼り付け">
                 <button onclick="loadVideo()">読込</button>
             </div>
             <div class="input-group">
-                <label>CSV選択</label>
+                <label>2. 動画ファイル</label>
+                <input type="file" id="videoFile" accept="video/*">
+            </div>
+            <div class="input-group">
+                <label>3. CSV選択</label>
                 <input type="file" id="csvFile" accept=".csv">
             </div>
             <div class="input-group">
-                <label>形式</label>
+                <label>4. 形式</label>
                 <select id="timeFormat">
                     <option value="hms">時:分:秒 (1:05:23)</option>
                     <option value="seconds">総秒数 (75)</option>
@@ -88,16 +92,16 @@
             </div>
         </div>
 
-        <div class="video-container">
+        <div class="video-container" id="videoWrapper">
             <div id="player"></div>
         </div>
         
         <div class="controls">
-            <button onclick="skip(-5)">◀ 5秒戻る</button>
-            <button onclick="stepFrame(-1/30)">◀ コマ戻し</button>
-            <button onclick="togglePlay()">再生/停止</button>
+            <button onclick="stepFrame(-1/30)">◀ コマ戻り</button>
+            <button onclick="skip(-5)">◀ 5秒巻き戻し</button>
+            <button onclick="togglePlay()">再生停止</button>
+            <button onclick="skip(5)">5秒早送り ▶</button>
             <button onclick="stepFrame(1/30)">コマ送り ▶</button>
-            <button onclick="skip(5)">5秒進む ▶</button>
         </div>
         
         <div class="btn-group">
@@ -138,7 +142,6 @@
 
 <script src="https://www.youtube.com/iframe_api"></script>
 <script>
-    // 自動判別キーワード（部分一致の優先順位を整理）
     const MATCH_RULES = {
         inning: ["イニング", "回"],
         pitcher: ["投手名", "投手"],
@@ -147,7 +150,10 @@
         result: ["投球結果", "打席結果", "結果"]
     };
 
-    let player;
+    let player;         // YouTubeプレーヤー用
+    let localVideo;     // パソコン内動画プレイヤー用
+    let isYouTube = true;
+
     let csvData = [];
     let csvHeaders = [];
     let displayIndices = { inning: -1, pitcher: -1, batter: -1, ball: -1, strike: -1, result: -1 };
@@ -156,12 +162,29 @@
 
     function onYouTubeIframeAPIReady() {}
 
+    // YouTube動画の読み込み
     function loadVideo() {
         const urlInput = document.getElementById('youtubeUrl').value.trim();
         const videoId = extractVideoId(urlInput);
         if (!videoId) { alert('YouTubeのURLが正しくありません'); return; }
-        if (player) { player.loadVideoById(videoId); } 
-        else { player = new YT.Player('player', { height: '100%', width: '100%', videoId: videoId, playerVars: { 'playsinline': 1, 'controls': 1 } }); }
+        
+        isYouTube = true;
+        // 既存のローカル動画プレイヤーがあれば削除
+        if (localVideo) { localVideo.remove(); localVideo = null; }
+        
+        // YouTube領域を初期化または復活
+        let pDiv = document.getElementById('player');
+        if (!pDiv) {
+            pDiv = document.createElement('div');
+            pDiv.id = 'player';
+            document.getElementById('videoWrapper').appendChild(pDiv);
+        }
+
+        if (player && typeof player.loadVideoById === 'function') { 
+            player.loadVideoById(videoId); 
+        } else { 
+            player = new YT.Player('player', { height: '100%', width: '100%', videoId: videoId, playerVars: { 'playsinline': 1, 'controls': 1 } }); 
+        }
     }
 
     function extractVideoId(url) {
@@ -171,10 +194,68 @@
         return (match && match[1]) ? match[1] : null;
     }
 
-    function togglePlay() { if (player) { const s = player.getPlayerState(); s === 1 ? player.pauseVideo() : player.playVideo(); } }
-    function skip(s) { if (player) player.seekTo(player.getCurrentTime() + s, true); }
-    function stepFrame(s) { if (player) { player.pauseVideo(); player.seekTo(player.getCurrentTime() + s, true); } }
+    // パソコン内（ローカル）動画の読み込み
+    document.getElementById('videoFile').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
 
+        isYouTube = false;
+        // YouTubeのiframeプレイヤーを非表示・クリア
+        if (player) {
+            try { player.destroy(); } catch(err) {}
+            player = null;
+        }
+        const wrapper = document.getElementById('videoWrapper');
+        wrapper.innerHTML = ''; // 中身を一度クリア
+
+        // ローカル動画用のvideoタグを生成
+        localVideo = document.createElement('video');
+        localVideo.controls = true;
+        localVideo.src = URL.createObjectURL(file);
+        wrapper.appendChild(localVideo);
+    });
+
+    // 各種動画コントロール操作
+    function getCurrentVideoTime() {
+        if (isYouTube && player && typeof player.getCurrentTime === 'function') {
+            return player.getCurrentTime();
+        } else if (!isYouTube && localVideo) {
+            return localVideo.currentTime;
+        }
+        return 0;
+    }
+
+    function setVideoTime(time) {
+        if (isYouTube && player && typeof player.seekTo === 'function') {
+            player.seekTo(time, true);
+        } else if (!isYouTube && localVideo) {
+            localVideo.currentTime = time;
+        }
+    }
+
+    function togglePlay() {
+        if (isYouTube && player) {
+            const s = player.getPlayerState();
+            s === 1 ? player.pauseVideo() : player.playVideo();
+        } else if (!isYouTube && localVideo) {
+            localVideo.paused ? localVideo.play() : localVideo.pause();
+        }
+    }
+
+    function skip(s) {
+        setVideoTime(getCurrentVideoTime() + s);
+    }
+
+    function stepFrame(s) {
+        if (isYouTube && player) {
+            player.pauseVideo();
+        } else if (!isYouTube && localVideo) {
+            localVideo.pause();
+        }
+        setVideoTime(getCurrentVideoTime() + s);
+    }
+
+    // CSVパース処理（既存機能のまま）
     document.getElementById('csvFile').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -189,7 +270,6 @@
     }
 
     function parseCSV(text) {
-        // カンマで行が分割される際、クォーテーション内のカンマを保護しつつ正しくパースする
         const lines = [];
         let row = [];
         let inQuotes = false;
@@ -219,19 +299,16 @@
 
         if(lines.length === 0) return;
         
-        // ヘッダー行の取得
         csvHeaders = lines[0].map(h => h.replace(/"/g, '').trim());
         csvHeaders = csvHeaders.map(h => h === "タイムスタンプ" ? "旧スタンプ" : h);
         csvHeaders.push("タイムスタンプ");
         myStampIndex = csvHeaders.length - 1;
 
-        // 【修正】打者名の列をピンポイントで判別（「打者名」の完全一致を最優先、なければ「選手名」「打者」）
         let bIdx = csvHeaders.findIndex(h => h === "打者名");
         if (bIdx === -1) bIdx = csvHeaders.findIndex(h => h === "選手名");
         if (bIdx === -1) bIdx = csvHeaders.findIndex(h => h === "打者");
         displayIndices['batter'] = bIdx;
 
-        // その他の列の自動判別
         for (let key in MATCH_RULES) {
             displayIndices[key] = csvHeaders.findIndex(h => MATCH_RULES[key].some(c => h.includes(c)));
         }
@@ -288,8 +365,8 @@
     }
 
     function recordTimestamp() {
-        if (!player || currentInputId === null) return;
-        const ct = player.getCurrentTime(); 
+        if (currentInputId === null) return;
+        const ct = getCurrentVideoTime(); 
         const type = document.getElementById('timeFormat').value;
         let ft = "";
         if (type === "hms") {
