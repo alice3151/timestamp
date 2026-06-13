@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>野球動画タイムスタンプ記録ツール（任意行から入力開始版）</title>
+    <title>野球動画タイムスタンプ記録ツール（新規入力のみ出力版）</title>
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; color: #333; }
         h2 { margin-top: 0; font-size: 18px; color: #1a1a1a; border-left: 5px solid #007bff; padding-left: 10px; margin-bottom: 15px; }
@@ -159,7 +159,7 @@
     let csvData = [];
     let csvHeaders = [];
     let displayIndices = { inning: -1, pitcher: -1, batter: -1, ball: -1, strike: -1, result: -1 };
-    let currentInputId = null; // 現在黄色く選択されている行のオリジナルインデックス
+    let currentInputId = null;
     let myStampIndex = -1;
 
     function onYouTubeIframeAPIReady() {}
@@ -244,7 +244,7 @@
     });
 
     function loadSampleData() {
-        const sampleText = "イニング,投手名,打者名,ボールカウント,ストライクカウント,投球結果,タイムスタンプ\n5,山本,田中,0,0,ボール,\n6,山本,大谷,0,0,ファウル,\n6,山本,大谷,0,1,本塁打,";
+        const sampleText = "イニング,投手名,打者名,ボールカウント,ストライクカウント,投球結果,タイムスタンプ\n5,山本,田中,0,0,ボール,12:34\n6,山本,大谷,0,0,ファウル,\n6,山本,大谷,0,1,本塁打,";
         parseCSV(sampleText);
     }
 
@@ -270,6 +270,7 @@
         
         csvHeaders = lines[0].map(h => h.replace(/"/g, '').trim());
         
+        // ★既存のタイムスタンプ列の有無をチェック
         let existingStampIdx = csvHeaders.findIndex(h => h === "タイムスタンプ");
         if (existingStampIdx !== -1) {
             myStampIndex = existingStampIdx;
@@ -291,38 +292,21 @@
         for (let i = 1; i < lines.length; i++) {
             let cols = lines[i];
             while (cols.length < csvHeaders.length) { cols.push(''); }
+            
+            // ★【ここを修正】元のCSVに古いタイムスタンプが入っていても、強制的に「空っぽ」にして無視する
+            cols[myStampIndex] = ''; 
+            
             csvData.push({ originalIndex: i - 1, cells: cols });
         }
         
-        // 最初は1行目を選択状態にする
         if (csvData.length > 0) {
             currentInputId = csvData[0].originalIndex;
         }
         renderTable();
     }
 
-    function parseTimeToSeconds(timeStr) {
-        if (!timeStr) return null;
-        timeStr = timeStr.trim();
-        if (timeStr === '') return null;
-        if (/^\d+$/.test(timeStr)) { return parseInt(timeStr, 10); }
-        const parts = timeStr.split(':').map(Number);
-        if (parts.some(isNaN)) return null;
-        if (parts.length === 3) return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
-        if (parts.length === 2) return (parts[0] * 60) + parts[1];
-        return null;
-    }
-
-    // 行がクリックされた時の処理
     function handleRowClick(item) {
-        currentInputId = item.originalIndex; // クリックされた行を「次の入力対象(黄色)」にする
-        
-        // もしクリックした行にすでにスタンプが記録されていれば、その時間へジャンプ
-        const stampValue = item.cells[myStampIndex];
-        const seconds = parseTimeToSeconds(stampValue);
-        if (seconds !== null) {
-            setVideoTime(seconds);
-        }
+        currentInputId = item.originalIndex;
         renderTable();
     }
 
@@ -331,7 +315,6 @@
         tbody.innerHTML = '';
         if (csvData.length === 0) return;
 
-        // ★今回は「未入力が上」などの並び替えをせず、CSVの本来のイニング順（上から下へ流れる順）に固定表示します
         csvData.forEach(item => {
             const tr = document.createElement('tr');
             tr.id = `row-${item.originalIndex}`;
@@ -354,19 +337,15 @@
             tbody.appendChild(tr);
         });
         
-        // 選択されている行(黄色)が見える位置に自動スクロール
         const selectedRow = document.getElementById(`row-${currentInputId}`);
         if (selectedRow) {
             selectedRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         }
     }
 
-    // ★スタンプを記録したら、「純粋に1つ下の行」に自動で進むように改良
     function autoSelectNextRow() {
         if (currentInputId === null) return;
         const currentIndex = csvData.findIndex(i => i.originalIndex === currentInputId);
-        
-        // 1つ下の行があればそれを選択、なければそのまま
         if (currentIndex !== -1 && currentIndex + 1 < csvData.length) {
             currentInputId = csvData[currentIndex + 1].originalIndex;
         }
@@ -388,22 +367,16 @@
             ft = `${m}:${s.toString().padStart(2, '0')}`;
         }
         csvData.find(i => i.originalIndex === currentInputId).cells[myStampIndex] = ft;
-        
-        // 記録したら次の行（真下の行）へ自動で黄色いバーを移す
         autoSelectNextRow();
     }
 
     function undoTimestamp() {
         if (currentInputId === null) return;
-        
-        // 現在の行のスタンプを消す、または、1つ上の行に戻って消す
         let targetItem = csvData.find(i => i.originalIndex === currentInputId);
-        
         if (targetItem && targetItem.cells[myStampIndex] !== '') {
             targetItem.cells[myStampIndex] = '';
             renderTable();
         } else {
-            // 現在の行が空なら、1つ上の行に戻る
             const currentIndex = csvData.findIndex(i => i.originalIndex === currentInputId);
             if (currentIndex > 0) {
                 currentInputId = csvData[currentIndex - 1].originalIndex;
@@ -421,7 +394,7 @@
         const blob = new Blob([bom, out.join('\n')], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
-        link.href = url; link.download = "baseball_stamps_full.csv";
+        link.href = url; link.download = "baseball_stamps_new_only.csv";
         link.click();
     }
 </script>
