@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>野球動画タイムスタンプ記録ツール（ローカル動画対応＆ボタン名称統一版）</title>
+    <title>野球動画タイムスタンプ記録ツール（任意行から入力開始版）</title>
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; color: #333; }
         h2 { margin-top: 0; font-size: 18px; color: #1a1a1a; border-left: 5px solid #007bff; padding-left: 10px; margin-bottom: 15px; }
@@ -53,8 +53,10 @@
         th:nth-child(5), td:nth-child(5) { width: 40px; } /* S */
         th:nth-child(6), td:nth-child(6) { width: 85px; } /* 結果 */
         
+        tr { cursor: pointer; }
         tr.selected { background-color: #fff3cd !important; font-weight: bold; }
         tr.has-stamp { background-color: #e2f0d9; }
+        tr:hover { background-color: #f1f3f5; }
         
         .action-btns { margin-top: 15px; display: flex; gap: 10px; }
         .download-btn { background-color: #17a2b8; flex: 1; padding: 12px; font-size: 14px; }
@@ -111,7 +113,7 @@
     </div>
     
     <div class="right-panel">
-        <h2>データ一覧（未入力が上）</h2>
+        <h2>データ一覧</h2>
         <div class="table-container">
             <table id="csvTable">
                 <thead id="tableHead">
@@ -150,29 +152,26 @@
         result: ["投球結果", "打席結果", "結果"]
     };
 
-    let player;         // YouTubeプレーヤー用
-    let localVideo;     // パソコン内動画プレイヤー用
+    let player;
+    let localVideo;
     let isYouTube = true;
 
     let csvData = [];
     let csvHeaders = [];
     let displayIndices = { inning: -1, pitcher: -1, batter: -1, ball: -1, strike: -1, result: -1 };
-    let currentInputId = null;
+    let currentInputId = null; // 現在黄色く選択されている行のオリジナルインデックス
     let myStampIndex = -1;
 
     function onYouTubeIframeAPIReady() {}
 
-    // YouTube動画の読み込み
     function loadVideo() {
         const urlInput = document.getElementById('youtubeUrl').value.trim();
         const videoId = extractVideoId(urlInput);
         if (!videoId) { alert('YouTubeのURLが正しくありません'); return; }
         
         isYouTube = true;
-        // 既存のローカル動画プレイヤーがあれば削除
         if (localVideo) { localVideo.remove(); localVideo = null; }
         
-        // YouTube領域を初期化または復活
         let pDiv = document.getElementById('player');
         if (!pDiv) {
             pDiv = document.createElement('div');
@@ -194,43 +193,30 @@
         return (match && match[1]) ? match[1] : null;
     }
 
-    // パソコン内（ローカル）動画の読み込み
     document.getElementById('videoFile').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
 
         isYouTube = false;
-        // YouTubeのiframeプレイヤーを非表示・クリア
-        if (player) {
-            try { player.destroy(); } catch(err) {}
-            player = null;
-        }
+        if (player) { try { player.destroy(); } catch(err) {} player = null; }
         const wrapper = document.getElementById('videoWrapper');
-        wrapper.innerHTML = ''; // 中身を一度クリア
+        wrapper.innerHTML = '';
 
-        // ローカル動画用のvideoタグを生成
         localVideo = document.createElement('video');
         localVideo.controls = true;
         localVideo.src = URL.createObjectURL(file);
         wrapper.appendChild(localVideo);
     });
 
-    // 各種動画コントロール操作
     function getCurrentVideoTime() {
-        if (isYouTube && player && typeof player.getCurrentTime === 'function') {
-            return player.getCurrentTime();
-        } else if (!isYouTube && localVideo) {
-            return localVideo.currentTime;
-        }
+        if (isYouTube && player && typeof player.getCurrentTime === 'function') { return player.getCurrentTime(); } 
+        else if (!isYouTube && localVideo) { return localVideo.currentTime; }
         return 0;
     }
 
     function setVideoTime(time) {
-        if (isYouTube && player && typeof player.seekTo === 'function') {
-            player.seekTo(time, true);
-        } else if (!isYouTube && localVideo) {
-            localVideo.currentTime = time;
-        }
+        if (isYouTube && player && typeof player.seekTo === 'function') { player.seekTo(time, true); } 
+        else if (!isYouTube && localVideo) { localVideo.currentTime = time; }
     }
 
     function togglePlay() {
@@ -242,20 +228,13 @@
         }
     }
 
-    function skip(s) {
-        setVideoTime(getCurrentVideoTime() + s);
-    }
-
+    function skip(s) { setVideoTime(getCurrentVideoTime() + s); }
     function stepFrame(s) {
-        if (isYouTube && player) {
-            player.pauseVideo();
-        } else if (!isYouTube && localVideo) {
-            localVideo.pause();
-        }
+        if (isYouTube && player) { player.pauseVideo(); } 
+        else if (!isYouTube && localVideo) { localVideo.pause(); }
         setVideoTime(getCurrentVideoTime() + s);
     }
 
-    // CSVパース処理（既存機能のまま）
     document.getElementById('csvFile').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -265,7 +244,7 @@
     });
 
     function loadSampleData() {
-        const sampleText = "イニング,投手名,打者名,ボールカウント,ストライクカウント,投球結果\n1,友廣陸,矢竹開,0,0,ファウル\n1,友廣陸,矢竹開,0,1,ボール";
+        const sampleText = "イニング,投手名,打者名,ボールカウント,ストライクカウント,投球結果,タイムスタンプ\n5,山本,田中,0,0,ボール,\n6,山本,大谷,0,0,ファウル,\n6,山本,大谷,0,1,本塁打,";
         parseCSV(sampleText);
     }
 
@@ -277,32 +256,27 @@
 
         for (let i = 0; i < text.length; i++) {
             let c = text[i];
-            if (c === '"') {
-                inQuotes = !inQuotes;
-            } else if (c === ',' && !inQuotes) {
-                row.push(currentCell.trim());
-                currentCell = '';
-            } else if ((c === '\r' || c === '\n') && !inQuotes) {
+            if (c === '"') { inQuotes = !inQuotes; } 
+            else if (c === ',' && !inQuotes) { row.push(currentCell.trim()); currentCell = ''; } 
+            else if ((c === '\r' || c === '\n') && !inQuotes) {
                 if (c === '\r' && text[i+1] === '\n') { i++; }
                 row.push(currentCell.trim());
                 if (row.length > 0 && row.some(cell => cell !== '')) { lines.push(row); }
-                row = [];
-                currentCell = '';
-            } else {
-                currentCell += c;
-            }
+                row = []; currentCell = '';
+            } else { currentCell += c; }
         }
-        if (currentCell !== '' || row.length > 0) {
-            row.push(currentCell.trim());
-            lines.push(row);
-        }
-
+        if (currentCell !== '' || row.length > 0) { row.push(currentCell.trim()); lines.push(row); }
         if(lines.length === 0) return;
         
         csvHeaders = lines[0].map(h => h.replace(/"/g, '').trim());
-        csvHeaders = csvHeaders.map(h => h === "タイムスタンプ" ? "旧スタンプ" : h);
-        csvHeaders.push("タイムスタンプ");
-        myStampIndex = csvHeaders.length - 1;
+        
+        let existingStampIdx = csvHeaders.findIndex(h => h === "タイムスタンプ");
+        if (existingStampIdx !== -1) {
+            myStampIndex = existingStampIdx;
+        } else {
+            csvHeaders.push("タイムスタンプ");
+            myStampIndex = csvHeaders.length - 1;
+        }
 
         let bIdx = csvHeaders.findIndex(h => h === "打者名");
         if (bIdx === -1) bIdx = csvHeaders.findIndex(h => h === "選手名");
@@ -317,10 +291,39 @@
         for (let i = 1; i < lines.length; i++) {
             let cols = lines[i];
             while (cols.length < csvHeaders.length) { cols.push(''); }
-            cols[myStampIndex] = ''; 
             csvData.push({ originalIndex: i - 1, cells: cols });
         }
-        autoSelectNextRow();
+        
+        // 最初は1行目を選択状態にする
+        if (csvData.length > 0) {
+            currentInputId = csvData[0].originalIndex;
+        }
+        renderTable();
+    }
+
+    function parseTimeToSeconds(timeStr) {
+        if (!timeStr) return null;
+        timeStr = timeStr.trim();
+        if (timeStr === '') return null;
+        if (/^\d+$/.test(timeStr)) { return parseInt(timeStr, 10); }
+        const parts = timeStr.split(':').map(Number);
+        if (parts.some(isNaN)) return null;
+        if (parts.length === 3) return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+        if (parts.length === 2) return (parts[0] * 60) + parts[1];
+        return null;
+    }
+
+    // 行がクリックされた時の処理
+    function handleRowClick(item) {
+        currentInputId = item.originalIndex; // クリックされた行を「次の入力対象(黄色)」にする
+        
+        // もしクリックした行にすでにスタンプが記録されていれば、その時間へジャンプ
+        const stampValue = item.cells[myStampIndex];
+        const seconds = parseTimeToSeconds(stampValue);
+        if (seconds !== null) {
+            setVideoTime(seconds);
+        }
+        renderTable();
     }
 
     function renderTable() {
@@ -328,21 +331,15 @@
         tbody.innerHTML = '';
         if (csvData.length === 0) return;
 
-        let uncompleted = csvData.filter(item => item.cells[myStampIndex] === '' && item.originalIndex !== currentInputId);
-        let completed = csvData.filter(item => item.cells[myStampIndex] !== '' && item.originalIndex !== currentInputId);
-        completed.reverse();
-
-        let sorted = [];
-        let curr = csvData.find(i => i.originalIndex === currentInputId);
-        if (curr) sorted.push(curr);
-        sorted = sorted.concat(uncompleted).concat(completed);
-
-        sorted.forEach(item => {
+        // ★今回は「未入力が上」などの並び替えをせず、CSVの本来のイニング順（上から下へ流れる順）に固定表示します
+        csvData.forEach(item => {
             const tr = document.createElement('tr');
             tr.id = `row-${item.originalIndex}`;
+            
             if (item.originalIndex === currentInputId) tr.classList.add('selected');
             if (item.cells[myStampIndex] !== '') tr.classList.add('has-stamp');
-            tr.onclick = () => { currentInputId = item.originalIndex; renderTable(); };
+            
+            tr.onclick = () => { handleRowClick(item); };
 
             const keys = ['inning', 'pitcher', 'batter', 'ball', 'strike', 'result'];
             keys.forEach(k => {
@@ -356,11 +353,23 @@
             tr.appendChild(tdS);
             tbody.appendChild(tr);
         });
+        
+        // 選択されている行(黄色)が見える位置に自動スクロール
+        const selectedRow = document.getElementById(`row-${currentInputId}`);
+        if (selectedRow) {
+            selectedRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
     }
 
+    // ★スタンプを記録したら、「純粋に1つ下の行」に自動で進むように改良
     function autoSelectNextRow() {
-        let next = csvData.find(i => i.cells[myStampIndex] === '');
-        currentInputId = next ? next.originalIndex : null;
+        if (currentInputId === null) return;
+        const currentIndex = csvData.findIndex(i => i.originalIndex === currentInputId);
+        
+        // 1つ下の行があればそれを選択、なければそのまま
+        if (currentIndex !== -1 && currentIndex + 1 < csvData.length) {
+            currentInputId = csvData[currentIndex + 1].originalIndex;
+        }
         renderTable();
     }
 
@@ -379,18 +388,29 @@
             ft = `${m}:${s.toString().padStart(2, '0')}`;
         }
         csvData.find(i => i.originalIndex === currentInputId).cells[myStampIndex] = ft;
+        
+        // 記録したら次の行（真下の行）へ自動で黄色いバーを移す
         autoSelectNextRow();
     }
 
     function undoTimestamp() {
-        let target = null;
-        if (currentInputId !== null && csvData[currentInputId].cells[myStampIndex] !== '') {
-            target = csvData[currentInputId];
+        if (currentInputId === null) return;
+        
+        // 現在の行のスタンプを消す、または、1つ上の行に戻って消す
+        let targetItem = csvData.find(i => i.originalIndex === currentInputId);
+        
+        if (targetItem && targetItem.cells[myStampIndex] !== '') {
+            targetItem.cells[myStampIndex] = '';
+            renderTable();
         } else {
-            let done = csvData.filter(i => i.cells[myStampIndex] !== '');
-            if (done.length > 0) target = done[done.length - 1];
+            // 現在の行が空なら、1つ上の行に戻る
+            const currentIndex = csvData.findIndex(i => i.originalIndex === currentInputId);
+            if (currentIndex > 0) {
+                currentInputId = csvData[currentIndex - 1].originalIndex;
+                csvData[currentIndex - 1].cells[myStampIndex] = '';
+                renderTable();
+            }
         }
-        if (target) { target.cells[myStampIndex] = ''; currentInputId = target.originalIndex; renderTable(); }
     }
 
     function downloadCSV() {
